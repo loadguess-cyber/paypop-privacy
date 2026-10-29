@@ -133,9 +133,35 @@ async function submit(){
   if(r!=='signed'){btn.disabled=false;btn.textContent='서명 완료';alert(MSG[r]||'보내지 못했어요. 인터넷을 확인하고 다시 눌러 주세요.');return;}
   DONE={sign:png,reason,at:new Date()};
   history.replaceState(null,'',location.pathname);   // 주소창에서 열쇠를 지운다
-  app.innerHTML=`<div class="card noprint"><h1>서명 완료</h1><div class="hint">사장님께 전달했어요. 이 페이지를 닫으면 다시 볼 수 없어요 — 필요하면 지금 <b>[저장·인쇄]</b>를 눌러 'PDF로 저장'을 고르세요.</div>
-      <button class="btn" onclick="window.print()">저장·인쇄</button></div>
-    <div class="card">${docHTML(DOC,png,reason)}<div class="foot">근로자 서명 ${esc(DONE.at.toLocaleString('ko-KR'))} · 급여뚝딱 전자 서명</div></div>`;
+  app.innerHTML=`<div class="card noprint"><h1>서명 완료</h1><div class="hint">사장님께 전달했어요. <b>이 페이지를 닫으면 다시 볼 수 없어요.</b> 아래에서 서명본을 저장해 두세요.</div>
+      <div id="saveBox" class="hint" style="margin-top:10px;">서명본 이미지를 만드는 중…</div></div>
+    <div class="card" id="signedDoc">${docHTML(DOC,png,reason)}<div class="foot">근로자 서명 ${esc(DONE.at.toLocaleString('ko-KR'))} · 급여뚝딱 전자 서명</div></div>`;
+  makeImage();
+}
+/* 서명본을 이미지로 — 카톡 안 브라우저는 인쇄(PDF 저장)가 막혀 있다(10-30 실기기에서 저장이 안 됨).
+   ① 길게 눌러 이미지 저장 ② 공유 ③ 내려받기 셋 다 둔다. 라이브러리는 이때만 불러온다. */
+function loadH2C(){return new Promise((res,rej)=>{if(window.html2canvas)return res();const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+async function makeImage(){
+  const box=document.getElementById('saveBox');
+  const name=(DOC.title||'계약서')+'_'+DONE.at.toISOString().slice(0,10)+'.png';
+  try{
+    await loadH2C();
+    const cv=await html2canvas(document.getElementById('signedDoc'),{scale:2,backgroundColor:'#ffffff',logging:false});
+    const url=cv.toDataURL('image/png');
+    const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+    box.innerHTML=`<div style="font-weight:800;color:var(--ink);">① 아래 이미지를 <span style="color:var(--blue)">길게 눌러 [이미지 저장]</span></div>
+      <img src="${url}" alt="서명본" style="width:100%;border:1px solid var(--line2);border-radius:8px;margin:8px 0;">
+      <div class="row"><button class="btn" id="shareImg">② 공유·저장</button><a class="btn gray" id="dlImg" download="${esc(name)}" href="${url}" style="text-align:center;text-decoration:none;">③ 내려받기</a></div>
+      <button class="btn ghost" onclick="window.print()">인쇄 (PC·크롬)</button>`;
+    document.getElementById('shareImg').onclick=async()=>{
+      try{const f=new File([blob],name,{type:'image/png'});
+        if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:DOC.title||'계약서'});return;}}
+      catch(e){if(e&&e.name==='AbortError')return;}
+      document.getElementById('dlImg').click();
+    };
+  }catch(e){
+    box.innerHTML='이미지를 만들지 못했어요. 이 화면을 <b>캡처</b>해서 보관해 주세요. <button class="btn ghost" onclick="window.print()">인쇄</button>';
+  }
 }
 async function decline(){
   if(!confirm('서명하지 않을까요? 사장님께 "서명 안 함"으로 전달돼요.'))return;
