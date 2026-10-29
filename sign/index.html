@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>계약서 서명 — 급여뚝딱</title>
+<style>
+  /* 급여뚝딱 '링크로 서명' 페이지 (2026-10-30).
+     사장님이 보낸 링크(#t=열쇠)로 열린다. 로그인 없이 서버 함수 두 개(get/sign_contract_by_token)만 부른다.
+     ★ 이 페이지는 아무것도 저장하지 않는다(쿠키·localStorage 없음). 서명 뒤 [저장·인쇄]로 사본을 받을 수 있다. */
+  :root{--ink:#191F28;--ink2:#4E5968;--gray:#8B95A1;--line:#E5E8EB;--line2:#D1D6DB;--bg:#F2F4F6;--blue:#3182F6;--blue-tint:#E8F3FF;--red:#F04452;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;font-size:15px;line-height:1.55;}
+  .wrap{max-width:640px;margin:0 auto;padding:16px 16px 40px;}
+  .card{background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;}
+  h1{font-size:18px;margin:4px 0 12px;}
+  .hint{font-size:13px;color:var(--ink2);}
+  .btn{display:block;width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:800;background:var(--blue);color:#fff;cursor:pointer;margin-top:8px;}
+  .btn.gray{background:var(--line);color:var(--ink2);}
+  .btn.ghost{background:transparent;color:var(--gray);font-weight:700;}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0;}
+  .chip{border:1px solid var(--line2);background:#fff;border-radius:10px;padding:8px 12px;font-size:14px;cursor:pointer;}
+  .chip.on{background:var(--blue);border-color:var(--blue);color:#fff;}
+  input[type=text]{width:100%;border:1px solid var(--line2);border-radius:10px;padding:12px;font-size:15px;}
+  label.ck{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;}
+  .sign-pad{position:relative;margin-top:12px;height:200px;border:1.5px dashed var(--line2);border-radius:12px;background:#fff;overflow:hidden;}
+  .sign-pad canvas{width:100%;height:100%;display:block;touch-action:none;}
+  .sign-hint{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;color:#B0B8C1;font-size:13px;pointer-events:none;}
+  .doc table{width:100%;border-collapse:collapse;font-size:13px;}
+  .doc th,.doc td{border:1px solid var(--line2);padding:6px;text-align:center;}
+  .doc th{background:var(--bg);color:var(--ink2);}
+  .ct-doc{font-size:14px;line-height:1.65;}
+  .ct-h{text-align:center;font-size:20px;font-weight:900;margin:4px 0 12px;}
+  .ct-items{list-style:none;padding:0;margin:0;}
+  .ct-items li{padding:7px 0;border-bottom:1px dashed var(--line2);}
+  .ct-it{font-weight:800;}.ct-tx{padding-left:12px;word-break:keep-all;}
+  .ct-day{text-align:center;font-weight:800;margin:14px 0 10px;}
+  .ct-parties{display:flex;gap:8px;flex-wrap:wrap;}.ct-party{flex:1 1 240px;}
+  .ct-party th{width:30%}.ct-party td{text-align:left}
+  .ct-sigbox{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;}
+  .ct-sigbox img{height:32px;max-width:110px;object-fit:contain;}
+  .ct-to{width:100%;text-align:center;font-weight:800;margin-top:10px;}
+  .foot{font-size:11px;color:var(--gray);text-align:center;margin-top:10px;}
+  .err{color:var(--red);font-weight:700;}
+  @media print{body{background:#fff}.noprint{display:none!important}.card{padding:0}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="card">불러오는 중…</div></div>
+<script>
+const API='https://lkejasrndvwelbluanlv.supabase.co/rest/v1/rpc/';
+const KEY='sb_publishable_ta1VRF9y4VHOII8y16-7Sw_PNVb6exx';
+const REASONS=['개인 사정','계약기간 만료','공사(현장) 종료','회사 권유 (권고사직)','기타'];
+const MSG={not_found:'링크가 올바르지 않아요. 사장님께 다시 보내 달라고 해 주세요.',already:'이미 서명했거나 처리된 문서예요.',expired:'링크 기한(7일)이 지났어요. 사장님께 다시 보내 달라고 해 주세요.',need_reason:'퇴사 사유를 골라 주세요.',bad_sign:'서명을 다시 그려 주세요.',decline_not_allowed:'이 문서는 서명 거부를 할 수 없어요.'};
+const token=(new URLSearchParams(location.hash.slice(1))).get('t')||'';
+const app=document.getElementById('app');
+let DOC=null,KIND='',pad=null,DONE=null;
+function esc(s){return s==null?'':String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function rpc(fn,body){
+  const r=await fetch(API+fn,{method:'POST',headers:{'apikey':KEY,'Authorization':'Bearer '+KEY,'Content-Type':'application/json'},body:JSON.stringify(body),referrerPolicy:'no-referrer'});
+  if(!r.ok)throw new Error('서버 '+r.status);
+  return r.json();
+}
+function okImg(v){return typeof v==='string'&&/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(v)?v:'';}
+function dt(v){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(v||'');return m?`${m[1]}년 ${+m[2]}월 ${+m[3]}일`:esc(v||'');}
+function docHTML(d,sign,reason){
+  d=d||{};const b=d.boss||{},w=d.worker||{},party=d.party||['사업주','근로자'];
+  const fill=(t,x)=>{let s=String(x||'');if(t==='퇴사 사유'&&reason)s=reason;return esc(s).replace(/\n/g,'<br>');};
+  const items=(d.items||[]).map((i,ix)=>`<li><div class="ct-it">${ix+1}. ${esc(i.t)}</div><div class="ct-tx">${fill(i.t,i.x)}</div></li>`).join('');
+  const sig=(png,name)=>`<span class="ct-sigbox"><span>${esc(name||'')} (서명)</span>${okImg(png)?`<img src="${okImg(png)}" alt="서명">`:''}</span>`;
+  const wRows=`<tr><th>성명</th><td>${sig(sign,w.name)}</td></tr>${w.birth?`<tr><th>생년월일</th><td>${esc(w.birth)}</td></tr>`:''}${w.rrn?`<tr><th>주민등록번호</th><td>${esc(w.rrn)}</td></tr>`:''}
+    <tr><th>연락처</th><td>${esc(w.phone||'')}</td></tr><tr><th>주소</th><td>${esc(w.addr||'')}</td></tr>${w.emergency?`<tr><th>비상 연락처</th><td>${esc(w.emergency)}</td></tr>`:''}`;
+  const parties=d.kind==='resign'
+    ?`<table class="ct-party"><tr><th colspan="2">${esc(party[1])}</th></tr>${wRows}</table><div class="ct-to">${esc(b.biz||'')} 대표 ${esc(b.owner||'')} 귀하</div>`
+    :`<table class="ct-party"><tr><th colspan="2">${esc(party[0])}</th></tr><tr><th>사업체명</th><td>${esc(b.biz||'')}</td></tr>
+        <tr><th>대표자</th><td>${sig(d.bossSign,b.owner)}</td></tr>${b.bizNo?`<tr><th>사업자번호</th><td>${esc(b.bizNo)}</td></tr>`:''}<tr><th>주소</th><td>${esc(b.bizAddr||'')}</td></tr></table>
+      <table class="ct-party"><tr><th colspan="2">${esc(party[1])}</th></tr>${wRows}</table>`;
+  return `<div class="doc ct-doc"><div class="ct-h">${esc(d.title||'계약서')}</div>${d.intro?`<p>${esc(d.intro)}</p>`:''}
+    <ol class="ct-items">${items}</ol><div class="ct-day">${dt(d.date)}</div><div class="ct-parties">${parties}</div></div>`;
+}
+function showMsg(t){app.innerHTML=`<div class="card"><h1>계약서 서명</h1><div class="err">${esc(t)}</div></div>`;}
+async function load(){
+  if(token.length<32){showMsg(MSG.not_found);return;}
+  let rows;try{rows=await rpc('get_contract_by_token',{p_token:token});}catch(e){showMsg('서버에 연결하지 못했어요. 인터넷을 확인하고 다시 열어 주세요.');return;}
+  if(!rows||!rows.length){showMsg('링크가 만료됐거나 이미 서명한 문서예요. 필요하면 사장님께 다시 보내 달라고 해 주세요.');return;}
+  DOC=rows[0].doc||{};KIND=rows[0].kind||DOC.kind;
+  const isR=KIND==='resign';const reasons=Array.isArray(DOC.reasons)?DOC.reasons:REASONS;
+  app.innerHTML=`<div class="card"><h1>${esc(DOC.title||'계약서')} 서명</h1>
+      <div class="hint">${esc((DOC.boss&&DOC.boss.biz)||'사장님')}에서 보낸 문서예요. 끝까지 읽고 서명해 주세요. 서명하면 바로 사장님께 전달되고, <b>이 링크로는 다시 열 수 없어요</b> — 서명 직후 [저장·인쇄]로 사본을 받아 두세요.</div></div>
+    <div class="card">${docHTML(DOC,null,'')}</div>
+    <div class="card">
+      ${isR?`<div style="font-weight:800;">퇴사 사유 (직접 고르세요)</div><div class="chips">${reasons.map(r=>`<button type="button" class="chip" data-r="${esc(r)}">${esc(r)}</button>`).join('')}</div>
+        <input type="text" id="reason" placeholder="사유를 고르거나 직접 적어 주세요">`:''}
+      <label class="ck"><input type="checkbox" id="ok"> 내용을 읽고 확인했습니다</label>
+      <div class="sign-pad"><canvas id="cv"></canvas><div class="sign-hint">여기에 손가락으로 서명</div></div>
+      <div class="row"><button class="btn gray" id="clear">지우기</button><button class="btn" id="submit">서명 완료</button></div>
+      ${isR?`<button class="btn ghost" id="decline">서명하지 않을래요</button>`:''}
+      <div class="foot">급여뚝딱 전자 서명 · 링크는 보낸 날부터 7일 동안만 열려요</div></div>`;
+  app.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{const r=b.dataset.r;const el=document.getElementById('reason');el.value=r==='기타'?'':r;app.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===b));if(r==='기타')el.focus();});
+  document.getElementById('clear').onclick=padClear;
+  document.getElementById('submit').onclick=submit;
+  const dc=document.getElementById('decline');if(dc)dc.onclick=decline;
+  padInit();
+}
+function padInit(){
+  const cv=document.getElementById('cv'),dpr=window.devicePixelRatio||1,box=cv.getBoundingClientRect();
+  cv.width=Math.round(box.width*dpr);cv.height=Math.round(box.height*dpr);
+  const g=cv.getContext('2d');g.scale(dpr,dpr);g.lineWidth=2.6;g.lineCap='round';g.lineJoin='round';g.strokeStyle='#111';
+  pad={cv,g,dirty:false,down:false,last:null};
+  const pt=ev=>{const r=cv.getBoundingClientRect();return{x:ev.clientX-r.left,y:ev.clientY-r.top};};
+  cv.addEventListener('pointerdown',ev=>{ev.preventDefault();try{cv.setPointerCapture(ev.pointerId);}catch(_){}pad.down=true;pad.last=pt(ev);g.beginPath();g.arc(pad.last.x,pad.last.y,1.2,0,7);g.fillStyle='#111';g.fill();pad.dirty=true;cv.parentNode.querySelector('.sign-hint').style.display='none';});
+  cv.addEventListener('pointermove',ev=>{if(!pad.down)return;ev.preventDefault();const p=pt(ev);g.beginPath();g.moveTo(pad.last.x,pad.last.y);g.lineTo(p.x,p.y);g.stroke();pad.last=p;});
+  const up=()=>{pad.down=false;};cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);cv.addEventListener('pointerleave',up);
+}
+function padClear(){pad.g.clearRect(0,0,pad.cv.width,pad.cv.height);pad.dirty=false;pad.cv.parentNode.querySelector('.sign-hint').style.display='';}
+function padPNG(){
+  if(!pad||!pad.dirty)return null;
+  const {cv}=pad,w=cv.width,h=cv.height,d=pad.g.getImageData(0,0,w,h).data;let x0=w,y0=h,x1=-1,y1=-1;
+  for(let y=0;y<h;y+=2)for(let x=0;x<w;x+=2){if(d[(y*w+x)*4+3]>10){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}}
+  if(x1<0)return null;x0=Math.max(0,x0-8);y0=Math.max(0,y0-8);x1=Math.min(w-1,x1+8);y1=Math.min(h-1,y1+8);
+  const sw=x1-x0+1,sh=y1-y0+1,s=Math.min(1,360/sw,140/sh),o=document.createElement('canvas');o.width=Math.max(1,Math.round(sw*s));o.height=Math.max(1,Math.round(sh*s));
+  o.getContext('2d').drawImage(cv,x0,y0,sw,sh,0,0,o.width,o.height);return o.toDataURL('image/png');
+}
+async function submit(){
+  if(!document.getElementById('ok').checked){alert('"내용을 읽고 확인했습니다"에 체크해 주세요');return;}
+  let reason='';if(KIND==='resign'){reason=(document.getElementById('reason').value||'').trim();if(!reason){alert(MSG.need_reason);return;}}
+  const png=padPNG();if(!png){alert('서명을 그려 주세요');return;}
+  const btn=document.getElementById('submit');btn.disabled=true;btn.textContent='보내는 중…';
+  let r;try{r=await rpc('sign_contract_by_token',{p_token:token,p_sign:png,p_reason:reason||null,p_decline:false});}catch(e){r='net';}
+  if(r!=='signed'){btn.disabled=false;btn.textContent='서명 완료';alert(MSG[r]||'보내지 못했어요. 인터넷을 확인하고 다시 눌러 주세요.');return;}
+  DONE={sign:png,reason,at:new Date()};
+  history.replaceState(null,'',location.pathname);   // 주소창에서 열쇠를 지운다
+  app.innerHTML=`<div class="card noprint"><h1>서명 완료</h1><div class="hint">사장님께 전달했어요. 이 페이지를 닫으면 다시 볼 수 없어요 — 필요하면 지금 <b>[저장·인쇄]</b>를 눌러 'PDF로 저장'을 고르세요.</div>
+      <button class="btn" onclick="window.print()">저장·인쇄</button></div>
+    <div class="card">${docHTML(DOC,png,reason)}<div class="foot">근로자 서명 ${esc(DONE.at.toLocaleString('ko-KR'))} · 급여뚝딱 전자 서명</div></div>`;
+}
+async function decline(){
+  if(!confirm('서명하지 않을까요? 사장님께 "서명 안 함"으로 전달돼요.'))return;
+  let r;try{r=await rpc('sign_contract_by_token',{p_token:token,p_sign:null,p_reason:null,p_decline:true});}catch(e){r='net';}
+  if(r!=='declined'){alert(MSG[r]||'처리하지 못했어요');return;}
+  history.replaceState(null,'',location.pathname);
+  showMsg('서명하지 않았다고 사장님께 전했어요. 이 창을 닫으셔도 돼요.');
+}
+load();
+</script>
+</body>
+</html>
